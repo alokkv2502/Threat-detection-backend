@@ -1,8 +1,11 @@
 from django.urls import path
-from .views import record_page, upload_audio, process_audio
+from .views import record_page, start_listening, stop_listening, stream_audio
+from django.http import JsonResponse
 
 urlpatterns = [
     path('', record_page, name='record'),
-    path('api/upload/', upload_audio, name='audio-upload'),
-    path('api/process/', process_audio, name='process-audio'),
+    path('start/', start_listening, name='start-listening'),
+    path('stop/', stop_listening, name='stop-listening'),
+    path('stream/', stream_audio, name='stream-audio'),
+    path('projects/', lambda request: JsonResponse({'message': 'Projects API works!'})),
 ]

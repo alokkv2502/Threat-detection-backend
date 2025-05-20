@@ -1,93 +1,141 @@
-
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Threat Detection - Audio Recording</title>
+    <title>Real-time Threat Detection</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
     <div class="bg-white shadow-lg rounded-lg p-6 w-full max-w-lg">
-        <h1 class="text-2xl font-bold text-gray-800 mb-4">Audio Threat Detection</h1>
+        <h1 class="text-2xl font-bold text-gray-800 mb-4">Real-time Threat Detection</h1>
 
         <div class="flex gap-2 mb-4">
-            <button id="startRecording" class="px-4 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 transition disabled:opacity-50" disabled>Start Recording</button>
-            <button id="stopRecording" class="px-4 py-2 bg-red-500 text-white rounded-lg shadow hover:bg-red-600 transition disabled:opacity-50" disabled>Stop Recording</button>
-            <button id="uploadAudio" class="px-4 py-2 bg-blue-500 text-white rounded-lg shadow hover:bg-blue-600 transition disabled:opacity-50" disabled>Upload Audio</button>
-            <button id="processAudio" class="px-4 py-2 bg-purple-500 text-white rounded-lg shadow hover:bg-purple-600 transition disabled:opacity-50" disabled>Process Audio</button>
+            <button id="startRecording" class="px-4 py-2 bg-green-500 text-white rounded-lg shadow hover:bg-green-600 transition disabled:opacity-50" disabled>Start Listening</button>
+            <button id="stopRecording" class="px-4 py-2 bg-red-500 text-white rounded-lg shadow hover:bg-red-600 transition disabled:opacity-50" disabled>Stop Listening</button>
         </div>
 
-        <audio id="audioPlayer" controls class="w-full hidden"></audio>
+        <div id="recordingStatus" class="hidden mb-4">
+            <div class="flex items-center gap-2">
+                <div class="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+                <span class="text-red-500 font-medium">Listening in progress...</span>
+            </div>
+        </div>
 
-        <div id="result" class="mt-4 text-lg font-semibold text-gray-700"></div>
+        <div id="transcriptionContainer" class="mt-4">
+            <h2 class="text-lg font-semibold text-gray-700 mb-2">Live Transcription:</h2>
+            <div id="transcription" class="bg-gray-50 p-4 rounded-lg mb-4 min-h-[100px] max-h-[200px] overflow-y-auto"></div>
+            
+            <h2 class="text-lg font-semibold text-gray-700 mb-2">Threat Analysis:</h2>
+            <div id="threatAnalysis" class="bg-gray-50 p-4 rounded-lg">
+                <p class="text-gray-600">No threats detected yet.</p>
+            </div>
+        </div>
     </div>
 
     <script>
         const startBtn = document.getElementById('startRecording');
         const stopBtn = document.getElementById('stopRecording');
-        const uploadBtn = document.getElementById('uploadAudio');
-        const processBtn = document.getElementById('processAudio');
-        const audioPlayer = document.getElementById('audioPlayer');
-        const resultDiv = document.getElementById('result');
+        const recordingStatus = document.getElementById('recordingStatus');
+        const transcription = document.getElementById('transcription');
+        const threatAnalysis = document.getElementById('threatAnalysis');
 
         let mediaRecorder;
-        let audioChunks = [];
+        let audioContext;
+        let eventSource;
+        let isRecording = false;
 
         // Request microphone access
         navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
             startBtn.disabled = false;
-            mediaRecorder = new MediaRecorder(stream);
-            
-            mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
-            mediaRecorder.onstop = () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                const audioUrl = URL.createObjectURL(audioBlob);
-                audioPlayer.src = audioUrl;
-                audioPlayer.classList.remove('hidden');
-                uploadBtn.disabled = false;
+            audioContext = new AudioContext();
+            const source = audioContext.createMediaStreamSource(stream);
+            const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+
+            processor.onaudioprocess = (e) => {
+                if (isRecording) {
+                    const audioData = e.inputBuffer.getChannelData(0);
+                    sendAudioChunk(audioData);
+                }
             };
         });
 
-        startBtn.addEventListener('click', () => {
-            audioChunks = [];
-            mediaRecorder.start();
+        async function sendAudioChunk(audioData) {
+            try {
+                const blob = new Blob([audioData], { type: 'audio/wav' });
+                const formData = new FormData();
+                formData.append('audio', blob);
+
+                await fetch('/api/stream/', {
+                    method: 'POST',
+                    body: formData
+                });
+            } catch (error) {
+                console.error('Error sending audio chunk:', error);
+            }
+        }
+
+        function startListening() {
+            isRecording = true;
             startBtn.disabled = true;
             stopBtn.disabled = false;
-        });
+            recordingStatus.classList.remove('hidden');
+            transcription.textContent = '';
+            threatAnalysis.innerHTML = '<p class="text-gray-600">No threats detected yet.</p>';
 
-        stopBtn.addEventListener('click', () => {
-            mediaRecorder.stop();
+            // Start SSE connection
+            eventSource = new EventSource('/api/start/');
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                // Update transcription
+                if (data.text) {
+                    transcription.textContent += data.text + ' ';
+                    transcription.scrollTop = transcription.scrollHeight;
+                }
+
+                // Update threat analysis
+                if (data.is_threat) {
+                    const threatWords = data.threat_words.join(', ');
+                    threatAnalysis.innerHTML = `
+                        <p class="text-red-600 font-semibold">
+                            ⚠️ Threat Detected!
+                        </p>
+                        <p class="text-gray-600 mt-2">
+                            Detected threat words: ${threatWords}
+                        </p>
+                    `;
+                }
+            };
+
+            eventSource.onerror = (error) => {
+                console.error('SSE Error:', error);
+                stopListening();
+            };
+        }
+
+        async function stopListening() {
+            isRecording = false;
             startBtn.disabled = false;
             stopBtn.disabled = true;
-        });
+            recordingStatus.classList.add('hidden');
 
-        uploadBtn.addEventListener('click', async () => {
-            const formData = new FormData();
-            formData.append("audio", new Blob(audioChunks, { type: "audio/wav" }), "user_audio.wav");
-
-            const response = await fetch("/upload/", {
-                method: "POST",
-                body: formData
-            });
-
-            const data = await response.json();
-            alert(data.message);
-
-            if (response.ok) {
-                processBtn.disabled = false;
+            if (eventSource) {
+                eventSource.close();
             }
-        });
 
-        processBtn.addEventListener('click', async () => {
-            const response = await fetch("/process/", { method: "POST" });
-            const data = await response.json();
+            try {
+                await fetch('/api/stop/');
+            } catch (error) {
+                console.error('Error stopping:', error);
+            }
+        }
 
-            resultDiv.innerHTML = `
-                <p><strong>Threat Level:</strong> ${data.threat_level}</p>
-                <p><strong>Transcript:</strong> ${data.transcript}</p>
-                
-            `;
-        });
+        startBtn.addEventListener('click', startListening);
+        stopBtn.addEventListener('click', stopListening);
     </script>
 </body>
 </html>
