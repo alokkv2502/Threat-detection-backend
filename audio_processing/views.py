@@ -34,52 +34,68 @@ realtime_stt = AudioToTextRecorder(
 )
 
 # Define words associated with threats
-THREAT_WORDS = ["bomb", "attack", "shoot", "kill", "threat", "danger", "terrorist"]
+THREAT_WORDS = ["bomb", "attack", "shoot", "kill", "threat", "danger", "terrorist","Tanish"]
 
 # Global queue for audio chunks
 audio_queue = queue.Queue()
 is_listening = False
+
+AUDIO_BUFFER = []
+BUFFER_SIZE = 16000  # 1 second at 16kHz
 
 def record_page(request):
     """ Render the recording UI """
     return render(request, 'record.html')
 
 def process_audio_chunk(chunk):
-    """Process a single audio chunk and return transcription and threat status"""
+    global AUDIO_BUFFER
+    AUDIO_BUFFER.extend(chunk.tolist())
+    print(f"[Backend] Buffer length: {len(AUDIO_BUFFER)}")
+    if len(AUDIO_BUFFER) < BUFFER_SIZE:
+        return None  # Not enough audio yet
+
+    # Process the buffer
+    audio_to_process = np.array(AUDIO_BUFFER[:BUFFER_SIZE], dtype=np.float32)
+    AUDIO_BUFFER = AUDIO_BUFFER[BUFFER_SIZE:]  # Remove processed samples
+
     try:
-        # Downsample to 8000 Hz if possible
-        if len(chunk) > 0:
-            chunk = scipy.signal.resample(chunk, int(len(chunk) * 8000 / 16000))
-        # Re-instantiate the model for each chunk (if OOM persists)
+        print("[Backend] Instantiating model and feeding buffered audio...")
         result = AudioToTextRecorder(
             model="tiny",
             device="cpu",
             compute_type="float32",
-            batch_size=1
-        ).transcribe(chunk)
-        if result and result.text:
-            is_threat = any(word in result.text.lower() for word in THREAT_WORDS)
+            batch_size=2
+        )
+        result.feed_audio(audio_to_process)
+        text = result.text()
+        print("[Backend] Transcription result:", text)
+        if result and text:
+            is_threat = any(word in text.lower() for word in THREAT_WORDS)
+            print("[Backend] Threat detected:" if is_threat else "[Backend] No threat detected.")
             return {
-                "text": result.text,
+                "text": text,
                 "is_threat": is_threat,
-                "threat_words": [word for word in THREAT_WORDS if word in result.text.lower()]
+                "threat_words": [word for word in THREAT_WORDS if word in text.lower()]
             }
     except Exception as e:
-        print(f"Error processing chunk: {str(e)}")
+        print(f"[Backend] Error processing chunk: {str(e)}")
     return None
 
 def audio_processor():
     """Background thread to process audio chunks"""
-    while is_listening:
+    print("[Backend] Audio processor started. is_listening:", is_listening)
+    while is_listening or not audio_queue.empty():
         try:
             if not audio_queue.empty():
+                print("[Backend] Getting chunk from queue...")
                 chunk = audio_queue.get()
                 result = process_audio_chunk(chunk)
                 if result:
+                    print("[Backend] Yielding result to frontend:", result)
                     yield f"data: {json.dumps(result)}\n\n"
             time.sleep(0.1)  # Small delay to prevent CPU overload
         except Exception as e:
-            print(f"Error in audio processor: {str(e)}")
+            print(f"[Backend] Error in audio processor: {str(e)}")
 
 @csrf_exempt
 def start_listening(request):
@@ -112,11 +128,16 @@ def stream_audio(request):
     if request.method == "POST" and request.FILES.get("audio"):
         try:
             audio_file = request.FILES["audio"]
+            print("[Backend] Received audio file of size:", audio_file.size)
             # Convert the audio chunk to numpy array
             audio_data = np.frombuffer(audio_file.read(), dtype=np.float32)
+            print("[Backend] Converted audio to numpy array of shape:", audio_data.shape)
             # Add to processing queue
             audio_queue.put(audio_data)
+            print("[Backend] Audio chunk added to queue.")
             return JsonResponse({"status": "received"})
         except Exception as e:
+            print(f"[Backend] Error receiving audio chunk: {str(e)}")
             return JsonResponse({"error": str(e)}, status=400)
+    print("[Backend] No audio data received in POST request.")
     return JsonResponse({"error": "No audio data received"}, status=400)

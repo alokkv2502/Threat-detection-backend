@@ -58,6 +58,7 @@
             processor.onaudioprocess = (e) => {
                 if (isRecording) {
                     const audioData = e.inputBuffer.getChannelData(0);
+                    console.log('Sending audio chunk of length:', audioData.length);
                     sendAudioChunk(audioData);
                 }
             };
@@ -68,11 +69,12 @@
                 const blob = new Blob([audioData], { type: 'audio/wav' });
                 const formData = new FormData();
                 formData.append('audio', blob);
-
-                await fetch('/api/stream/', {
+                console.log('Posting audio chunk to /api/stream/');
+                const response = await fetch('/api/stream/', {
                     method: 'POST',
                     body: formData
                 });
+                console.log('Response from /api/stream/:', response.status);
             } catch (error) {
                 console.error('Error sending audio chunk:', error);
             }
@@ -86,10 +88,11 @@
             transcription.textContent = '';
             threatAnalysis.innerHTML = '<p class="text-gray-600">No threats detected yet.</p>';
 
-            // Start SSE connection
+            console.log('Opening SSE connection to /api/start/');
             eventSource = new EventSource('/api/start/');
             eventSource.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                console.log('Received SSE message:', data);
                 
                 // Update transcription
                 if (data.text) {
@@ -123,9 +126,14 @@
             stopBtn.disabled = true;
             recordingStatus.classList.add('hidden');
 
-            if (eventSource) {
-                eventSource.close();
-            }
+            // Wait a bit before closing the event source to allow last transcription to arrive
+            setTimeout(() => {
+                if (eventSource) {
+                    eventSource.close();
+                }
+            }, 1000); // 1 second delay
+
+            console.log('Stopping listening, closing SSE and sending /api/stop/');
 
             try {
                 await fetch('/api/stop/');
