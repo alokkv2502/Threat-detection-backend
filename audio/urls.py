@@ -8,7 +8,8 @@ realtime_stt = AudioToTextRecorder(
     model="tiny",
     device="cpu",
     compute_type="float32",
-    batch_size=1
+    batch_size=1,
+    language="en",
 )
 
 def process_audio_chunk(chunk):

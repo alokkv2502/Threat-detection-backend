@@ -30,11 +30,12 @@ realtime_stt = AudioToTextRecorder(
     model="tiny",
     device="cpu",
     compute_type="float32",
-    batch_size=1
+    batch_size=1,
+    language="en",
 )
 
 # Define words associated with threats
-THREAT_WORDS = ["bomb", "attack", "shoot", "kill", "threat", "danger", "terrorist","Tanish"]
+THREAT_WORDS = ["bomb", "attack", "shoot", "kill", "threat", "danger", "terrorist"]
 
 # Global queue for audio chunks
 audio_queue = queue.Queue()

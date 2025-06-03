@@ -111,6 +111,20 @@
                             Detected threat words: ${threatWords}
                         </p>
                     `;
+                    // Play beep sound when threat is detected
+                    console.log('Threat detected, attempting to play beep sound...');
+                    const beepSound = new Audio('/static/beep.mp3');
+                    
+                    beepSound.oncanplaythrough = () => {
+                        console.log('Beep sound loaded successfully');
+                        beepSound.play()
+                            .then(() => console.log('Beep sound played successfully'))
+                            .catch(error => console.error('Error playing beep sound:', error));
+                    };
+
+                    beepSound.onerror = (error) => {
+                        console.error('Error loading beep sound:', error);
+                    };
                 }
             };
 
